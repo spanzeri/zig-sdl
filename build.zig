@@ -7,18 +7,24 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "SDL3-static",
-        .target = target,
-        .optimize = optimize,
-    });
-    const dyn = b.addSharedLibrary(.{
-        .name = "SDL3",
-        .target = target,
-        .optimize = optimize,
-    });
+    const shared = b.option(bool, "shared", "Build SDL shared library [default: true]") orelse true;
+
+    const lib = if (shared)
+        b.addSharedLibrary(.{
+            .name = "SDL3-shared",
+            .target = target,
+            .optimize = optimize,
+        })
+    else
+        b.addStaticLibrary(.{
+            .name = "SDL3-static",
+            .target = target,
+            .optimize = optimize,
+        });
+
     setup(b, lib);
-    setup(b, dyn);
+    b.installArtifact(lib);
+    lib.installHeadersDirectory("include", "");
 }
 
 fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
@@ -58,6 +64,9 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
         "src/video/*.c",
         "src/video/yuv2rgb/*.c",
     }).items, &.{});
+
+    lib.addIncludePath(.{ .path = "include" });
+    lib.addIncludePath(.{ .path = "src" });
 
     switch (t.os.tag) {
         .windows => {
@@ -110,7 +119,7 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
         .linux => {
             const linux_srcs = globSources(glob_alloc, b.build_root.handle, &.{
                 // Core
-                "src/core/linux/*.c",
+                "src/core/unix/*.c",
                 "src/core/linux/SDL_evdev_capabilities.c",
                 "src/core/linux/SDL_threadprio.c",
                 "src/core/linux/SDL_sandbox.c",
