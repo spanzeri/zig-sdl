@@ -145,6 +145,11 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
 
             });
             lib.addCSourceFiles(linux_srcs.items, &.{});
+            lib.linkSystemLibrary("m");
+            lib.linkSystemLibrary("thread");
+            lib.linkSystemLibrary("iconv");
+            lib.linkSystemLibrary("alsa");
+            lib.linkSystemLibrary("pipewire");
         },
 
         else => {
