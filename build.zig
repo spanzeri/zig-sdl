@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const shared = b.option(bool, "shared", "Build SDL shared library [default: true]") orelse true;
+    const shared = b.option(bool, "SDL_SHARED", "Build SDL shared library [default: true]") orelse true;
 
     const lib = if (shared)
         b.addSharedLibrary(.{
@@ -23,8 +23,8 @@ pub fn build(b: *std.Build) void {
         });
 
     setup(b, lib);
-    b.installArtifact(lib);
     lib.installHeadersDirectory("include", "");
+    b.installArtifact(lib);
 }
 
 fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
