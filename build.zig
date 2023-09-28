@@ -25,6 +25,8 @@ pub fn build(b: *std.Build) void {
     setup(b, lib);
     lib.installHeadersDirectory("include", "");
     b.installArtifact(lib);
+
+    buildTest(b, lib);
 }
 
 fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
@@ -117,18 +119,19 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
             @panic("I do not have a macosx system at hand to test this. Feel free to contribute");
         },
         .linux => {
-            const linux_srcs = globSources(glob_alloc, b.build_root.handle, &.{
+            const libraries = fetchLinuxSystemLibraries(gpa, b);
+            const build_dir = b.build_root.handle;
+
+            const linux_srcs = globSources(glob_alloc, build_dir, &.{
                 // Core
                 "src/core/unix/*.c",
                 "src/core/linux/SDL_evdev_capabilities.c",
                 "src/core/linux/SDL_threadprio.c",
                 "src/core/linux/SDL_sandbox.c",
+                // Audio
+                "src/audio/alsa/*.c",
                 // Timers
                 "src/timer/unix/*.c",
-                // Audio
-                // #TODO: Currently picks OSS and ALSA. Other could be supported (jack, pulseaudio, pipewire)
-                "src/audio/dsp/*.c",
-                "src/audio/alsa/*.c",
                 // Video
                 // #TODO: We assume X, vulkan and opengl. This breaks in a number of possible scenarios:
                 //  - older system might not support vulkan,
@@ -142,14 +145,36 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
                 // Joystick
                 "src/joystick/linux/*.c",
                 "src/joystick/steam/*.c",
-
+                // Threads
+                "src/thread/pthread/SDL_systhread.c",
+                "src/thread/pthread/SDL_sysmutex.c",
+                "src/thread/pthread/SDL_syscond.c",
+                "src/thread/pthread/SDL_sysrwlock.c",
+                "src/thread/pthread/SDL_systls.c",
+                "src/thread/pthread/SDL_syssem.c",
             });
             lib.addCSourceFiles(linux_srcs.items, &.{});
+
+            lib.defineCMacro("_REENTRANT", "1");
+            lib.linkSystemLibrary("pthread");
             lib.linkSystemLibrary("m");
-            lib.linkSystemLibrary("thread");
             lib.linkSystemLibrary("iconv");
-            lib.linkSystemLibrary("alsa");
-            lib.linkSystemLibrary("pipewire");
+
+            if (findLinuxLib(gpa, "pipewire-0.3", libraries)) {
+                lib.addCSourceFiles(globSources(glob_alloc, build_dir, &.{ "src/audio/pipewire/*.c" }).items, &.{});
+                lib.linkSystemLibrary("pipewire-0.3");
+            }
+
+            if (findLinuxLib(gpa, "alsa", libraries)) {
+                lib.addCSourceFiles(globSources(glob_alloc, build_dir, &.{ "src/audio/alsa/*.c" }).items, &.{});
+                lib.linkSystemLibrary("alsa");
+            }
+
+            if (findLinuxLib(gpa, "pulse", libraries)) {
+                lib.addCSourceFiles(globSources(glob_alloc, build_dir, &.{ "src/audio/pulseaudio/*.c" }).items, &.{});
+                lib.linkSystemLibrary("pulse");
+            }
+
         },
 
         else => {
@@ -243,4 +268,47 @@ fn globSources(a: std.mem.Allocator, cwd: std.fs.Dir, paths: []const []const u8)
     }
 
     return res;
+}
+
+fn fetchLinuxSystemLibraries(a: std.mem.Allocator, b: *std.Build) std.ArrayList([]const u8) {
+    // #TODO: check this is indeed a linux target
+    var res = std.ArrayList([]const u8).init(a);
+    const out = b.exec(&.{ "ldconfig", "-p" });
+    var lines = std.mem.tokenizeScalar(u8, out, '\n');
+    while (lines.next()) |line| {
+        if (line.len > 0) {
+            var comps = std.mem.tokenizeScalar(u8, std.mem.trim(u8, line, " \t"), ' ');
+            while (comps.next()) |lib| {
+                res.append(lib) catch @panic("OOM");
+                break;
+            }
+        }
+    }
+    return res;
+}
+
+fn findLinuxLib(a: std.mem.Allocator, lib: []const u8, libs: std.ArrayList([]const u8)) bool {
+    const full_lib_name = std.fmt.allocPrint(a, "lib{s}.so", .{ lib }) catch @panic("OOM");
+    defer a.free(full_lib_name);
+
+    for (libs.items) |alib| {
+        if (std.mem.eql(u8, full_lib_name, alib)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn buildTest(b: *std.Build, lib: *std.build.Step.Compile) void {
+    const test_exe = b.addTest(.{
+        .root_source_file = .{ .path = "zig-build-test/simple.zig", },
+        .target = lib.target,
+        .optimize = lib.optimize,
+    });
+    test_exe.linkLibrary(lib);
+    test_exe.addIncludePath(.{ .path = "include" });
+
+    const run_test = b.addRunArtifact(test_exe);
+    const test_step = b.step("test", "Run simple test");
+    test_step.dependOn(&run_test.step);
 }
