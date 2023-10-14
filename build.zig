@@ -45,25 +45,35 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
         "src/*.c",
         "src/atomic/*.c",
         "src/audio/*.c",
+        "src/audio/disk/*.c",
+        "src/audio/dummy/*.c",
         "src/core/*.c",
         "src/cpuinfo/*.c",
         "src/dynapi/*.c",
         "src/events/*.c",
         "src/file/*.c",
-        "src/joystick/*.c",
+        "src/filesystem/dummy/*.c",
         "src/haptic/*.c",
+        "src/haptic/dummy/*.c",
         "src/hidapi/*.c",
+        "src/joystick/*.c",
+        "src/joystick/dummy/*.c",
         "src/libm/*.c",
         "src/locale/*.c",
+        "src/locale/dummy/*.c",
+        "src/loadso/dummy/*.c",
         "src/misc/*.c",
         "src/power/*.c",
         "src/render/*.c",
         "src/render/*/*.c",
         "src/sensor/*.c",
+        "src/sensor/dummy/*.c",
         "src/stdlib/*.c",
         "src/thread/*.c",
         "src/timer/*.c",
+        "src/timer/dummy/*.c",
         "src/video/*.c",
+        "src/video/dummy/*.c",
         "src/video/yuv2rgb/*.c",
     }).items, &.{});
 
@@ -132,19 +142,17 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
                 "src/audio/alsa/*.c",
                 // Timers
                 "src/timer/unix/*.c",
-                // Video
-                // #TODO: We assume X, vulkan and opengl. This breaks in a number of possible scenarios:
-                //  - older system might not support vulkan,
-                //  - raspberry pi and other platforms should be checked first and look for GLES
-                //  - not broken, but not nice, no wayland.
-                // Wayland requires some extra steps because it needs to generate header and sources from the xml
-                // protocols.
-                "src/video/x11/*.c",
+                // Filesystem
+                "src/filesystem/unix/*.c",
                 // Haptics
                 "src/haptic/linux/*.c",
+                // Loadso
+                "src/loadso/dlopen/*.c",
                 // Joystick
                 "src/joystick/linux/*.c",
                 "src/joystick/steam/*.c",
+                // Misc
+                "src/misc/unix/*.c",
                 // Threads
                 "src/thread/pthread/SDL_systhread.c",
                 "src/thread/pthread/SDL_sysmutex.c",
@@ -152,6 +160,9 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
                 "src/thread/pthread/SDL_sysrwlock.c",
                 "src/thread/pthread/SDL_systls.c",
                 "src/thread/pthread/SDL_syssem.c",
+                // Input events
+                "src/core/linux/SDL_evdev.c",
+                "src/core/linux/SDL_evdev_kbd.c",
             });
             lib.addCSourceFiles(linux_srcs.items, &.{});
 
@@ -175,6 +186,8 @@ fn setup(b: *std.Build, lib: *std.Build.Step.Compile) void {
                 lib.linkSystemLibrary("pulse");
             }
 
+            // X11
+            // .... todo
         },
 
         else => {
@@ -297,6 +310,42 @@ fn findLinuxLib(a: std.mem.Allocator, lib: []const u8, libs: std.ArrayList([]con
         }
     }
     return false;
+}
+
+fn hasLinuxProgram(b: *std.Build, prog: []const u8) bool {
+    var err_code: u8 = 0;
+    const res = b.execAllowFail(&.{ "whereis", "-b", prog }, &err_code, .Ignore) catch |e| {
+        std.log.info("hasLinuxProgram failed with execution error: {s}", .{ @errorName(e) });
+        return false;
+    };
+    if (err_code != 0)
+        return false;
+
+    var it = std.mem.tokenizeScalar(u8, res, ':');
+    _ = it.next() orelse return false;
+
+    const loc = std.mem.trim(u8, it.next() orelse return false, " \t\r\n");
+    return loc.len > 0;
+}
+
+fn findPath(a: std.mem.Alloctor, path: []const u8, hints: []const []const u8) ?[]const u8 {
+    if (path.len == 0)
+        return null;
+    if (path[0] == '/')
+        path = path[1..];
+
+    for (hints) |hint| {
+        if (hint.len > 0 and hint[hint.len - 1] == '/')
+            hint = hint[0..hint.len - 1];
+        const abspath = std.fmt.allocPrint(a, "{s}/{s}", .{ hint, path });
+        if (std.fs.accessAbsolute(abspath, .{})) {
+            return abspath;
+        } else |_| {
+            a.free(abspath);
+        }
+    }
+
+    return null;
 }
 
 fn buildTest(b: *std.Build, lib: *std.build.Step.Compile) void {
